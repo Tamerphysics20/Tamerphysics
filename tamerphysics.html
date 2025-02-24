@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tamerphysics - محاكاة العزم ومركز الكتلة</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+        #controls { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0, 0, 0, 0.7); padding: 10px; }
+        #info { position: absolute; top: 10px; right: 10px; color: white; background: rgba(0, 0, 0, 0.7); padding: 10px; }
+        button { margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <label>القوة (نيوتن): <input type="number" id="force" value="10" step="1" oninput="updateSimulation()"></label><br>
+        <label>المسافة (متر): <input type="number" id="distance" value="1" step="0.1" oninput="updateSimulation()"></label><br>
+        <label>موضع مركز الكتلة (متر): <input type="number" id="com" value="0.5" step="0.1" oninput="updateSimulation()"></label><br>
+        <label>كتلة الجسم (كجم): <input type="number" id="mass" value="2" step="0.1" oninput="updateSimulation()"></label><br>
+        <button onclick="resetSimulation()">إعادة ضبط</button>
+    </div>
+    <div id="info">
+        العزم: <span id="torque">0</span> نيوتن.متر<br>
+        التسارع الزاوي: <span id="angularAcc">0</span> راديان/ث²<br>
+        تنبؤ الـ AI: <span id="aiPrediction">0</span> نيوتن.متر
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script>
+        // إعداد المشهد
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // إضاءة للمشهد
+        const light = new THREE.DirectionalLight(0xffffff, 1);
+        light.position.set(5, 5, 5);
+        light.castShadow = true;
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0x404040));
+
+        // الذراع ثلاثي الأبعاد مع كتلتين
+        const armLength = 2;
+        const armGeometry = new THREE.BoxGeometry(armLength, 0.2, 0.2);
+        const armMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+        const arm = new THREE.Mesh(armGeometry, armMaterial);
+        arm.castShadow = true;
+        arm.receiveShadow = true;
+        scene.add(arm);
+
+        // كتلة إضافية على الذراع
+        const massGeometry = new THREE.SphereGeometry(0.1, 32, 32);
+        const massMaterial = new THREE.MeshPhongMaterial({ color: 0x0000ff });
+        const extraMass = new THREE.Mesh(massGeometry, massMaterial);
+        extraMass.position.set(armLength / 2 - 0.2, 0, 0);
+        extraMass.castShadow = true;
+        scene.add(extraMass);
+
+        // محور الدوران
+        const pivotGeometry = new THREE.SphereGeometry(0.1, 32, 32);
+        const pivotMaterial = new THREE.MeshPhongMaterial({ color: 0xffff00 });
+        const pivot = new THREE.Mesh(pivotGeometry, pivotMaterial);
+        pivot.castShadow = true;
+        scene.add(pivot);
+
+        // مركز الكتلة
+        const comGeometry = new THREE.SphereGeometry(0.05, 32, 32);
+        const comMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
+        const centerOfMass = new THREE.Mesh(comGeometry, comMaterial);
+        centerOfMass.castShadow = true;
+        scene.add(centerOfMass);
+
+        camera.position.z = 5;
+
+        // متغيرات الفيزياء
+        let torque = 0;
+        let angle = 0;
+        let angularVelocity = 0;
+        let mass = 2;
+        let comPosition = 0.5;
+        let momentOfInertia = mass * comPosition * comPosition;
+        let angularAcceleration = 0;
+
+        // نموذج AI
+        const model = tf.sequential();
+        model.add(tf.layers.dense({ units: 10, activation: 'relu', inputShape: [4] })); // 4 مدخلات: force, distance, com, mass
+        model.add(tf.layers.dense({ units: 1 }));
+        model.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
+
+        // تدريب النموذج ببيانات وهمية (مثال)
+        async function trainModel() {
+            const xs = tf.tensor2d([
+                [10, 1, 0.5, 2], [20, 2, 1, 3], [5, 0.5, 0.2, 1], [15, 1.5, 0.8, 2.5]
+            ]);
+            const ys = tf.tensor2d([[10], [40], [2.5], [22.5]]); // عزم متوقع
+            await model.fit(xs, ys, { epochs: 100, verbose: 0 });
+            console.log("تم تدريب النموذج!");
+        }
+        trainModel();
+
+        // تنبؤ الـ AI
+        function predictTorque(force, distance, com, mass) {
+            const input = tf.tensor2d([[force, distance, com, mass]]);
+            const prediction = model.predict(input);
+            return prediction.dataSync()[0];
+        }
+
+        // تحديث المحاكاة
+        function updateSimulation() {
+            const force = parseFloat(document.getElementById('force').value);
+            const distance = parseFloat(document.getElementById('distance').value);
+            comPosition = parseFloat(document.getElementById('com').value);
+            mass = parseFloat(document.getElementById('mass').value);
+
+            // حساب العزم
+            torque = force * distance;
+
+            // تحديث عزم القصور الذاتي
+            momentOfInertia = mass * comPosition * comPosition;
+            angularAcceleration = torque / momentOfInertia;
+
+            // تحديث موقع مركز الكتلة
+            centerOfMass.position.set(comPosition - armLength / 2, 0, 0);
+
+            // تنبؤ الـ AI
+            const aiTorque = predictTorque(force, distance, comPosition, mass);
+
+            // عرض القيم
+            document.getElementById('torque').textContent = torque.toFixed(2);
+            document.getElementById('angularAcc').textContent = angularAcceleration.toFixed(2);
+            document.getElementById('aiPrediction').textContent = aiTorque.toFixed(2);
+        }
+
+        // إعادة ضبط
+        function resetSimulation() {
+            angle = 0;
+            angularVelocity = 0;
+            arm.rotation.z = 0;
+            document.getElementById('force').value = 10;
+            document.getElementById('distance').value = 1;
+            document.getElementById('com').value = 0.5;
+            document.getElementById('mass').value = 2;
+            updateSimulation();
+        }
+
+        // الرسوم المتحركة
+        function animate() {
+            requestAnimationFrame(animate);
+            angularVelocity += angularAcceleration * 0.01;
+            angle += angularVelocity * 0.01;
+            arm.rotation.z = angle;
+            extraMass.rotation.z = angle; // الكتلة الإضافية بتدور مع الذراع
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // ضبط الحجم
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+        });
+
+        // تحديث أولي
+        updateSimulation();
+    </script>
+</body>
+</html>
