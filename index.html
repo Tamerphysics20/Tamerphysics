@@ -8,18 +8,31 @@
         #controls { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0, 0, 0, 0.7); padding: 10px; }
         #info { position: absolute; top: 10px; right: 10px; color: white; background: rgba(0, 0, 0, 0.7); padding: 10px; }
         button { margin-top: 5px; }
+        .annotation { position: absolute; color: white; background: rgba(0, 0, 0, 0.6); padding: 8px; font-family: Arial, sans-serif; font-size: 14px; border-radius: 4px; pointer-events: none; }
+        .torqueIndicator { position: absolute; color: yellow; background: rgba(0, 0, 0, 0.5); padding: 5px; font-size: 16px; border: 2px solid yellow; pointer-events: none; }
     </style>
 </head>
 <body>
     <div id="controls">
-        <label>القوة (نيوتن): <input type="number" id="force" value="10" step="1" oninput="updateSimulation()"></label><br>
-        <label>المسافة (متر): <input type="number" id="distance" value="1" step="0.1" oninput="updateSimulation()"></label><br>
+        <label>القوة 1 (نيوتن): <input type="number" id="force1" value="10" step="1" oninput="updateSimulation()"></label><br>
+        <label>المسافة 1 (متر): <input type="number" id="distance1" value="1" step="0.1" oninput="updateSimulation()"></label><br>
+        <label>القوة 2 (نيوتن): <input type="number" id="force2" value="0" step="1" oninput="updateSimulation()"></label><br>
+        <label>المسافة 2 (متر): <input type="number" id="distance2" value="0" step="0.1" oninput="updateSimulation()"></label><br>
         <label>موضع مركز الكتلة (متر): <input type="number" id="com" value="0.5" step="0.1" oninput="updateSimulation()"></label><br>
         <label>كتلة الجسم (كجم): <input type="number" id="mass" value="2" step="0.1" oninput="updateSimulation()"></label><br>
+        <label>اتجاه العزم: 
+            <select id="torqueDirection" oninput="updateSimulation()">
+                <option value="1">ساعة</option>
+                <option value="-1">عكس الساعة</option>
+            </select>
+        </label><br>
+        <label>سرعة الدوران (ضعف): <input type="range" id="rotationSpeed" value="1" min="0.1" max="2" step="0.1" oninput="updateSimulation()"></label><br>
+        <button onclick="toggleRotation()">توقف/تشغيل</button>
+        <button onclick="toggleAnnotations()">عرض/إخفاء التوضيحات</button>
         <button onclick="resetSimulation()">إعادة ضبط</button>
     </div>
     <div id="info">
-        العزم: <span id="torque">0</span> نيوتن.متر<br>
+        العزم الكلي: <span id="totalTorque">0</span> نيوتن.متر<br>
         التسارع الزاوي: <span id="angularAcc">0</span> راديان/ث²<br>
         تنبؤ الـ AI: <span id="aiPrediction">0</span> نيوتن.متر
     </div>
@@ -32,105 +45,228 @@
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap; // ظلال ناعمة
         document.body.appendChild(renderer.domElement);
 
-        // إضاءة للمشهد
-        const light = new THREE.DirectionalLight(0xffffff, 1);
-        light.position.set(5, 5, 5);
+        // إضاءة قوية
+        const light = new THREE.DirectionalLight(0xffffff, 1.5);
+        light.position.set(5, 10, 5);
         light.castShadow = true;
+        light.shadow.mapSize.width = 1024;
+        light.shadow.mapSize.height = 1024;
         scene.add(light);
-        scene.add(new THREE.AmbientLight(0x404040));
+        scene.add(new THREE.AmbientLight(0x606060));
 
-        // الذراع ثلاثي الأبعاد مع كتلتين
+        // الذراع (مع تفاصيل أكتر)
         const armLength = 2;
-        const armGeometry = new THREE.BoxGeometry(armLength, 0.2, 0.2);
-        const armMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+        const armGeometry = new THREE.BoxGeometry(armLength, 0.4, 0.4);
+        const armMaterial = new THREE.MeshPhongMaterial({ color: 0xff6666, shininess: 100, specular: 0x555555 });
         const arm = new THREE.Mesh(armGeometry, armMaterial);
         arm.castShadow = true;
         arm.receiveShadow = true;
         scene.add(arm);
 
-        // كتلة إضافية على الذراع
-        const massGeometry = new THREE.SphereGeometry(0.1, 32, 32);
-        const massMaterial = new THREE.MeshPhongMaterial({ color: 0x0000ff });
-        const extraMass = new THREE.Mesh(massGeometry, massMaterial);
-        extraMass.position.set(armLength / 2 - 0.2, 0, 0);
-        extraMass.castShadow = true;
-        scene.add(extraMass);
+        // قاعدة المحور (مع تفاصيل)
+        const baseGeometry = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 32);
+        const baseMaterial = new THREE.MeshPhongMaterial({ color: 0x888888 });
+        const base = new THREE.Mesh(baseGeometry, baseMaterial);
+        base.position.y = -0.2;
+        base.castShadow = true;
+        scene.add(base);
 
         // محور الدوران
-        const pivotGeometry = new THREE.SphereGeometry(0.1, 32, 32);
-        const pivotMaterial = new THREE.MeshPhongMaterial({ color: 0xffff00 });
+        const pivotGeometry = new THREE.SphereGeometry(0.15, 32, 32);
+        const pivotMaterial = new THREE.MeshPhongMaterial({ color: 0xffff00, shininess: 50 });
         const pivot = new THREE.Mesh(pivotGeometry, pivotMaterial);
         pivot.castShadow = true;
         scene.add(pivot);
 
         // مركز الكتلة
-        const comGeometry = new THREE.SphereGeometry(0.05, 32, 32);
+        const comGeometry = new THREE.SphereGeometry(0.1, 32, 32);
         const comMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
         const centerOfMass = new THREE.Mesh(comGeometry, comMaterial);
         centerOfMass.castShadow = true;
         scene.add(centerOfMass);
 
-        camera.position.z = 5;
+        // كتلة إضافية
+        const massGeometry = new THREE.SphereGeometry(0.2, 32, 32);
+        const massMaterial = new THREE.MeshPhongMaterial({ color: 0x0000ff });
+        const extraMass = new THREE.Mesh(massGeometry, massMaterial);
+        extraMass.position.set(armLength / 2 - 0.3, 0, 0);
+        extraMass.castShadow = true;
+        scene.add(extraMass);
+
+        camera.position.set(0, 3, 6);
+        camera.lookAt(0, 0, 0);
 
         // متغيرات الفيزياء
-        let torque = 0;
+        let totalTorque = 0;
         let angle = 0;
         let angularVelocity = 0;
         let mass = 2;
         let comPosition = 0.5;
         let momentOfInertia = mass * comPosition * comPosition;
         let angularAcceleration = 0;
+        let isRotating = true;
+        let showAnnotations = true;
+        let rotationSpeed = 1;
 
-        // نموذج AI
+        // التوضيحات (Annotations)
+        const annotations = [];
+        const torqueIndicators = [];
+
+        function createAnnotation(text, x, y) {
+            const div = document.createElement('div');
+            div.className = 'annotation';
+            div.textContent = text;
+            div.style.left = x + 'px';
+            div.style.top = y + 'px';
+            document.body.appendChild(div);
+            annotations.push(div);
+        }
+
+        function createTorqueIndicator(text, x, y) {
+            const div = document.createElement('div');
+            div.className = 'torqueIndicator';
+            div.textContent = text;
+            div.style.left = x + 'px';
+            div.style.top = y + 'px';
+            document.body.appendChild(div);
+            torqueIndicators.push(div);
+        }
+
+        function clearAnnotations() {
+            annotations.forEach(ann => ann.remove());
+            annotations.length = 0;
+        }
+
+        function clearTorqueIndicators() {
+            torqueIndicators.forEach(ind => ind.remove());
+            torqueIndicators.length = 0;
+        }
+
+        // نموذج AI (محسن)
         const model = tf.sequential();
-        model.add(tf.layers.dense({ units: 10, activation: 'relu', inputShape: [4] })); // 4 مدخلات: force, distance, com, mass
+        model.add(tf.layers.dense({ units: 20, activation: 'relu', inputShape: [5] })); // 5 مدخلات: force1, distance1, force2, distance2, mass
         model.add(tf.layers.dense({ units: 1 }));
         model.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
 
-        // تدريب النموذج ببيانات وهمية (مثال)
         async function trainModel() {
             const xs = tf.tensor2d([
-                [10, 1, 0.5, 2], [20, 2, 1, 3], [5, 0.5, 0.2, 1], [15, 1.5, 0.8, 2.5]
+                [10, 1, 0, 0, 2], [20, 2, 5, -1, 3], [5, 0.5, 0, 0, 1], [15, 1.5, 10, 0.8, 2.5]
             ]);
-            const ys = tf.tensor2d([[10], [40], [2.5], [22.5]]); // عزم متوقع
-            await model.fit(xs, ys, { epochs: 100, verbose: 0 });
+            const ys = tf.tensor2d([[10], [40], [2.5], [22.5]]);
+            await model.fit(xs, ys, { epochs: 200, verbose: 0 });
             console.log("تم تدريب النموذج!");
         }
         trainModel();
 
-        // تنبؤ الـ AI
-        function predictTorque(force, distance, com, mass) {
-            const input = tf.tensor2d([[force, distance, com, mass]]);
+        function predictTorque(force1, distance1, force2, distance2, mass) {
+            const input = tf.tensor2d([[force1, distance1, force2, distance2, mass]]);
             const prediction = model.predict(input);
             return prediction.dataSync()[0];
         }
 
         // تحديث المحاكاة
         function updateSimulation() {
-            const force = parseFloat(document.getElementById('force').value);
-            const distance = parseFloat(document.getElementById('distance').value);
+            const force1 = parseFloat(document.getElementById('force1').value);
+            const distance1 = parseFloat(document.getElementById('distance1').value);
+            const force2 = parseFloat(document.getElementById('force2').value);
+            const distance2 = parseFloat(document.getElementById('distance2').value);
             comPosition = parseFloat(document.getElementById('com').value);
             mass = parseFloat(document.getElementById('mass').value);
+            const torqueDirection = parseFloat(document.getElementById('torqueDirection').value);
+            rotationSpeed = parseFloat(document.getElementById('rotationSpeed').value);
 
-            // حساب العزم
-            torque = force * distance;
+            // حساب العزم الكلي (مع اتجاه)
+            const torque1 = force1 * distance1 * torqueDirection;
+            const torque2 = force2 * distance2 * torqueDirection;
+            totalTorque = torque1 + torque2;
 
             // تحديث عزم القصور الذاتي
             momentOfInertia = mass * comPosition * comPosition;
-            angularAcceleration = torque / momentOfInertia;
+            angularAcceleration = totalTorque / momentOfInertia;
 
             // تحديث موقع مركز الكتلة
             centerOfMass.position.set(comPosition - armLength / 2, 0, 0);
+            extraMass.position.set(armLength / 2 - 0.3, 0, 0);
 
-            // تنبؤ الـ AI
-            const aiTorque = predictTorque(force, distance, comPosition, mass);
+            // إضافة التوضيحات
+            if (showAnnotations) {
+                clearAnnotations();
+                const canvas = renderer.domElement;
+                const rect = canvas.getBoundingClientRect();
 
-            // عرض القيم
-            document.getElementById('torque').textContent = torque.toFixed(2);
+                // توضيح القوة 1
+                if (force1 !== 0) {
+                    const x1 = rect.left + (distance1 / armLength) * canvas.width - 60;
+                    const y1 = rect.top + canvas.height / 2 - 40;
+                    createAnnotation(`Q1 = ${force1} N عند ${distance1} m`, x1, y1);
+
+                    // خط للقوة 1
+                    const lineGeometry1 = new THREE.BufferGeometry();
+                    const lineVertices1 = new Float32Array([
+                        0, 0, 0, // نقطة البداية (محور)
+                        distance1 - armLength / 2, 0, 0 // نقطة النهاية
+                    ]);
+                    lineGeometry1.setAttribute('position', new THREE.BufferAttribute(lineVertices1, 3));
+                    const lineMaterial1 = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 3 });
+                    const line1 = new THREE.Line(lineGeometry1, lineMaterial1);
+                    line1.position.y = 0.3; // فوق الذراع
+                    arm.add(line1);
+                }
+
+                // توضيح القوة 2
+                if (force2 !== 0) {
+                    const x2 = rect.left + (distance2 / armLength) * canvas.width - 60;
+                    const y2 = rect.top + canvas.height / 2 + 40;
+                    createAnnotation(`Q2 = ${force2} N عند ${distance2} m`, x2, y2);
+
+                    // خط للقوة 2
+                    const lineGeometry2 = new THREE.BufferGeometry();
+                    const lineVertices2 = new Float32Array([
+                        0, 0, 0, // نقطة البداية (محور)
+                        distance2 - armLength / 2, 0, 0 // نقطة النهاية
+                    ]);
+                    lineGeometry2.setAttribute('position', new THREE.BufferAttribute(lineVertices2, 3));
+                    const lineMaterial2 = new THREE.LineBasicMaterial({ color: 0x0000ff, linewidth: 3 });
+                    const line2 = new THREE.Line(lineGeometry2, lineMaterial2);
+                    line2.position.y = 0.3; // فوق الذراع
+                    arm.add(line2);
+                }
+            }
+
+            // مؤشر ديناميكي للعزم
+            if (showAnnotations) {
+                clearTorqueIndicators();
+                const canvas = renderer.domElement;
+                const rect = canvas.getBoundingClientRect();
+                const torqueText = `العزم الكلي: ${totalTorque.toFixed(2)} N.m`;
+                const x = rect.left + canvas.width / 2 - 100;
+                const y = rect.top + canvas.height - 50;
+                createTorqueIndicator(torqueText, x, y);
+            }
+
+            // تنبؤ الـ AI (محسن)
+            const aiTorque = predictTorque(force1, distance1, force2, distance2, mass);
+            document.getElementById('totalTorque').textContent = totalTorque.toFixed(2);
             document.getElementById('angularAcc').textContent = angularAcceleration.toFixed(2);
             document.getElementById('aiPrediction').textContent = aiTorque.toFixed(2);
+        }
+
+        // توقف/تشغيل الدوران
+        function toggleRotation() {
+            isRotating = !isRotating;
+        }
+
+        // عرض/إخفاء التوضيحات
+        function toggleAnnotations() {
+            showAnnotations = !showAnnotations;
+            if (!showAnnotations) {
+                clearAnnotations();
+                clearTorqueIndicators();
+            }
+            updateSimulation();
         }
 
         // إعادة ضبط
@@ -138,20 +274,31 @@
             angle = 0;
             angularVelocity = 0;
             arm.rotation.z = 0;
-            document.getElementById('force').value = 10;
-            document.getElementById('distance').value = 1;
+            document.getElementById('force1').value = 10;
+            document.getElementById('distance1').value = 1;
+            document.getElementById('force2').value = 0;
+            document.getElementById('distance2').value = 0;
             document.getElementById('com').value = 0.5;
             document.getElementById('mass').value = 2;
+            document.getElementById('torqueDirection').value = 1;
+            document.getElementById('rotationSpeed').value = 1;
             updateSimulation();
+            clearAnnotations();
+            clearTorqueIndicators();
         }
 
         // الرسوم المتحركة
         function animate() {
             requestAnimationFrame(animate);
-            angularVelocity += angularAcceleration * 0.01;
-            angle += angularVelocity * 0.01;
-            arm.rotation.z = angle;
-            extraMass.rotation.z = angle; // الكتلة الإضافية بتدور مع الذراع
+
+            if (isRotating) {
+                angularVelocity += angularAcceleration * 0.001 * rotationSpeed; // سرعة بطيئة مع تحكم
+                angle += angularVelocity * 0.001 * rotationSpeed;
+                arm.rotation.z = angle;
+                extraMass.rotation.z = angle;
+                centerOfMass.rotation.z = angle;
+            }
+
             renderer.render(scene, camera);
         }
         animate();
